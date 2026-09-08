@@ -13,7 +13,7 @@ import time
 
 import soundfile as sf
 
-from enhance_module import REGISTRY, TARGET_SR, create_enhancer
+from enhance_module import REGISTRY, create_enhancer
 
 TEST_DIR = "testset"
 
@@ -44,7 +44,7 @@ def main():
             dt = time.time() - t0
             total += dt
             n += 1
-            sf.write(os.path.join(outdir, f), enhanced, TARGET_SR)
+            sf.write(os.path.join(outdir, f), enhanced, enh.out_sr)
             print(f"  {f:<22} {dt:.2f}s")
 
         params = enh.count_params()

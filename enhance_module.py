@@ -33,19 +33,23 @@ class BaseEnhancer(abc.ABC):
     key = "base"           # 注册短名
     domain = "未知"         # 处理域：时域 / 频域-复数谱 / 频域-幅度掩码 / 混合(DSP+NN)
     n_params = "待查"       # 加载后自动统计
+    out_sr = 24000         # 对外输出采样率（官方管线口径 24k；内部统一 16k 处理）
 
     def __init__(self):
         self.model = None
 
     # ---- 对外唯一入口，子类不要覆盖 ----
     def enhance(self, wav, sr):
-        """输入带噪波形 numpy float32（任意采样率，可多声道），输出 16k 增强波形。"""
+        """输入带噪波形 numpy float32（任意采样率，可多声道），
+        输出 out_sr（默认 24k）增强波形——对外 24k、内部 16k 处理。"""
         if self.model is None:
             self._load()
         wav_t = self._to_16k_tensor(wav, sr)
         with torch.no_grad():
             out = self._forward(wav_t)
         out = out / out.abs().max().clamp(min=1e-8) * 0.9
+        if self.out_sr != TARGET_SR:
+            out = torchaudio.functional.resample(out, TARGET_SR, self.out_sr)
         return out.squeeze(0).numpy()
 
     # ---- 统一前后处理 ----

@@ -110,8 +110,10 @@ def main():
             if not f.endswith(".wav") or f.startswith("_"):
                 continue
             est, esr = sf.read(os.path.join(mdir, f), dtype="float32")
-            if esr != SR:
-                continue
+            if esr != SR:      # 对外 24k 的结果先转回 16k 再算指标
+                import torch, torchaudio
+                est = torchaudio.functional.resample(
+                    torch.from_numpy(est)[None], esr, SR)[0].numpy()
             ntype = f.split("_")[0]
             per_type.setdefault(ntype, []).append(metrics_of(est))
         results[mname] = per_type
