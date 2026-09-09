@@ -22,3 +22,8 @@ gtcrn-main/
 gtcrn.zip
 .gradio/
 nul
+tsdcba_model.h5
+tsdcba_infer_ref.py
+tsdcba_test.py
+inspect_lisennet.py
+test_lisennet_variants.py
