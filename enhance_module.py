@@ -37,6 +37,14 @@ class BaseEnhancer(abc.ABC):
 
     def __init__(self):
         self.model = None
+        self.device = torch.device("cpu")
+
+    def to_device(self, device):
+        """可选：把模型搬到指定设备（如 'cuda'）。在首次 enhance 之前调用。"""
+        self.device = torch.device(device)
+        if self.model is None:
+            self._load()
+        return self
 
     # ---- 对外唯一入口，子类不要覆盖 ----
     def enhance(self, wav, sr):
@@ -44,9 +52,10 @@ class BaseEnhancer(abc.ABC):
         输出 out_sr（默认 24k）增强波形——对外 24k、内部 16k 处理。"""
         if self.model is None:
             self._load()
-        wav_t = self._to_16k_tensor(wav, sr)
+        wav_t = self._to_16k_tensor(wav, sr).to(self.device)
         with torch.no_grad():
             out = self._forward(wav_t)
+        out = out.detach().cpu()
         out = out / out.abs().max().clamp(min=1e-8) * 0.9
         if self.out_sr != TARGET_SR:
             out = torchaudio.functional.resample(out, TARGET_SR, self.out_sr)
@@ -95,11 +104,11 @@ class GtcrnEnhancer(BaseEnhancer):
         ckpt = torch.load(os.path.join("checkpoints", "model_trained_on_dns3.tar"),
                           map_location="cpu", weights_only=False)
         model.load_state_dict(ckpt["model"])
-        model.eval()
+        model.eval().to(self.device)
         self.model = model
 
     def _forward(self, wav_t):
-        window = torch.hann_window(512).pow(0.5)
+        window = torch.hann_window(512).pow(0.5).to(wav_t.device)
         spec = torch.stft(wav_t.squeeze(0), 512, 256, 512, window,
                           return_complex=True)                       # (257, T) 复数
         model_in = torch.stack((spec.real, spec.imag), dim=-1)       # (257, T, 2)
@@ -114,19 +123,22 @@ class _SpeechBrainEnhancer(BaseEnhancer):
 
     def _load(self):
         savedir = os.path.join("pretrained_models", self.hf_id.split("/")[-1])
+        run_opts = {"device": str(self.device)}
         if self.key == "sepformer":
             from speechbrain.inference.separation import SepformerSeparation
             self.model = SepformerSeparation.from_hparams(source=self.hf_id,
-                                                          savedir=savedir)
+                                                          savedir=savedir,
+                                                          run_opts=run_opts)
         else:
             from speechbrain.inference.enhancement import SpectralMaskEnhancement
             self.model = SpectralMaskEnhancement.from_hparams(source=self.hf_id,
-                                                              savedir=savedir)
+                                                              savedir=savedir,
+                                                              run_opts=run_opts)
 
     def _forward(self, wav_t):
         if self.key == "sepformer":
             return self.model.separate_batch(wav_t)[:, :, 0].detach().cpu()
-        return self.model.enhance_batch(wav_t, torch.ones(1)).detach().cpu()
+        return self.model.enhance_batch(wav_t, torch.ones(1, device=wav_t.device)).detach().cpu()
 
 
 class MetricGANEnhancer(_SpeechBrainEnhancer):
@@ -163,6 +175,7 @@ class LiSenNetEnhancer(BaseEnhancer):
         return self.n_params
 
     def _forward(self, wav_t):
+        wav_t = wav_t.detach().cpu()         # ONNX 只跑 CPU（37K 模型足够快）
         window = torch.hann_window(512).pow(0.5)
         spec = torch.stft(wav_t.squeeze(0), 512, 256, 512, window,
                           return_complex=True)                       # (257, T)
@@ -225,7 +238,7 @@ class UlunasEnhancer(BaseEnhancer):
         ckpt = torch.load(os.path.join("ulunas_checkpoints", "model_trained_on_dns3.tar"),
                           map_location="cpu", weights_only=False)
         model.load_state_dict(ckpt["model"])
-        model.eval()
+        model.eval().to(self.device)
         self.model = model
 
     def _forward(self, wav_t):
